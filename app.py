@@ -12,7 +12,6 @@ st.markdown("""
     .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] { 
         background-color: #1e293b !important; color: #ffffff !important; 
     }
-    /* Colores para métricas */
     div[data-testid="stMetricValue"] { color: #34d399; } 
 </style>
 """, unsafe_allow_html=True)
@@ -26,7 +25,6 @@ with col_header_2:
 
 # --- MEMORIA TEMPORAL ---
 if 'data' not in st.session_state:
-    # Agregamos la columna 'Categoría' que antes no existía
     st.session_state.data = pd.DataFrame(columns=[
         "Fecha", "Categoría", "Descripción", "Lote", "Cantidad", "Unidad", 
         "Movimiento", "Costo Unitario", "Total", "Observaciones"
@@ -38,7 +36,7 @@ with st.sidebar:
     if st.button("🗑️ Resetear Base de Datos"):
         st.session_state.data = st.session_state.data.iloc[0:0]
         st.rerun()
-    st.info("Aquí podrás filtrar tus reportes más adelante.")
+    st.info("Sistema actualizado con control de Muestras.")
 
 # --- FORMULARIO DE INGRESO ---
 st.subheader("📝 Registrar Operación")
@@ -47,23 +45,33 @@ with st.container():
     # Fila 1: Qué es y Qué pasó
     c1, c2, c3, c4 = st.columns(4)
     categoria = c1.selectbox("Categoría del Item", ["Materia Prima", "Producto en Proceso", "Producto Terminado", "Suministros"])
-    movimiento = c2.selectbox("Tipo de Movimiento", ["Compra/Entrada", "Producción (+)", "Venta (-)", "Consumo Interno (-)", "Ajuste/Merma"])
-    desc = c3.text_input("Descripción (Ej: Tomate, Salsa Picante)")
+    
+    # AQUI ESTA TU CAMBIO DE MUESTRAS
+    movimiento = c2.selectbox("Tipo de Movimiento", [
+        "Compra/Entrada", 
+        "Producción (+)", 
+        "Venta (-)", 
+        "Entrega de Muestras (-)", 
+        "Consumo Interno (-)", 
+        "Ajuste/Merma"
+    ])
+    
+    desc = c3.text_input("Descripción (Ej: Salsa Ya!Jua)")
     lote = c4.text_input("Lote", value="GEN-" + datetime.now().strftime("%m%d"))
 
     # Fila 2: Cuánto y a qué precio
     c5, c6, c7, c8 = st.columns(4)
     cant = c5.number_input("Cantidad", min_value=0.0, format="%.2f")
-    unidad = c6.selectbox("Unidad", ["kg", "litros", "botellas", "cajas", "g"])
+    
+    # AQUI ESTA TU CAMBIO DE UNIDADES
+    unidad = c6.selectbox("Unidad", ["kg", "unidades", "cajas"])
+    
     costo = c7.number_input("Precio/Costo Unitario (Bs)", min_value=0.0, format="%.2f")
     obs = c8.text_input("Observaciones")
 
-    # Botón gigante de guardar
+    # Botón de guardar
     if st.button("💾 Guardar Registro", type="primary", use_container_width=True):
         if desc and cant > 0:
-            # Lógica de Signos: Si es Venta o Consumo, la cantidad es negativa para el stock visual
-            # Pero guardamos el valor absoluto y el tipo de movimiento define el signo en los reportes
-            
             nuevo_registro = {
                 "Fecha": datetime.now().strftime("%Y-%m-%d"),
                 "Categoría": categoria,
@@ -90,28 +98,41 @@ df = st.session_state.data
 
 if not df.empty:
     # 1. FILTROS RÁPIDOS
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Resumen General", "🍅 Materia Prima", "🌶️ Prod. Terminado / Ventas", "📋 Tabla Completa"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Resumen Financiero", "🍅 Materia Prima", "🌶️ Prod. Terminado / Salidas", "📋 Tabla Completa"])
     
     with tab1:
-        # Calcular Ventas Totales (Dinero que entró)
+        # Calcular Ventas Totales (Dinero que entró real)
         ventas = df[df['Movimiento'] == 'Venta (-)']['Total'].sum()
-        # Calcular Compras (Dinero que salió)
+        # Calcular Gastos en Compras
         compras = df[df['Movimiento'] == 'Compra/Entrada']['Total'].sum()
+        # Calcular Inversión en Muestras (Dinero que regalaste en producto)
+        costo_muestras = df[df['Movimiento'] == 'Entrega de Muestras (-)']['Total'].sum()
         
-        m1, m2, m3 = st.columns(3)
-        m1.metric("💰 Ventas Totales", f"Bs {ventas:,.2f}")
-        m2.metric("💸 Gastos en Compras", f"Bs {compras:,.2f}")
-        m3.metric("📈 Balance (Ventas - Compras)", f"Bs {ventas - compras:,.2f}", delta_color="normal")
+        col_metrics = st.columns(4)
+        col_metrics[0].metric("💰 Ventas Reales", f"Bs {ventas:,.2f}")
+        col_metrics[1].metric("💸 Compras MP", f"Bs {compras:,.2f}")
+        col_metrics[2].metric("🎁 Inversión Muestras", f"Bs {costo_muestras:,.2f}")
+        col_metrics[3].metric("📈 Flujo de Caja", f"Bs {ventas - compras:,.2f}", 
+             delta="Ganancia" if (ventas-compras) > 0 else "Déficit")
 
     with tab2:
         st.write("### Inventario de Materia Prima")
-        # Filtramos solo lo que sea Materia Prima
         df_mp = df[df['Categoría'] == 'Materia Prima']
         st.dataframe(df_mp, use_container_width=True)
 
     with tab3:
-        col_a, col_b = st.columns(2)
-        with col_a:
+        c_a, c_b = st.columns(2)
+        with c_a:
             st.write("### Stock Producto Terminado")
-            # Mostramos todo lo que sea Producto Terminado
             st.dataframe(df[df['Categoría'] == 'Producto Terminado'], use_container_width=True)
+        with c_b:
+            st.write("### Salidas (Ventas y Muestras)")
+            # Mostramos Ventas y Muestras juntas para ver salida de producto
+            filtro_salidas = df['Movimiento'].isin(['Venta (-)', 'Entrega de Muestras (-)'])
+            st.dataframe(df[filtro_salidas], use_container_width=True)
+
+    with tab4:
+        st.dataframe(df, use_container_width=True)
+
+else:
+    st.info("👋 Aún no hay datos. Registra tu primera operación arriba.")
