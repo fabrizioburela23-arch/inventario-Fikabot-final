@@ -1,138 +1,177 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from streamlit_gsheets import GSheetsConnection
 
-# --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Gestión FikaGroup", layout="wide", page_icon="🏭")
-
-# Estilos CSS
+# --- CONFIGURACIÓN ---
+st.set_page_config(page_title="FikaGroup Factory", layout="wide", page_icon="🏭")
 st.markdown("""
 <style>
     .stApp { background-color: #0f172a; color: #e2e8f0; }
     .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] { 
         background-color: #1e293b !important; color: #ffffff !important; 
     }
-    div[data-testid="stMetricValue"] { color: #34d399; } 
+    div[data-testid="stMetricValue"] { color: #34d399; }
+    .big-font { font-size:20px !important; font-weight: bold; color: #38bdf8; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- TÍTULO ---
-col_header_1, col_header_2 = st.columns([3, 1])
-with col_header_1:
-    st.title("🏭 Gestión de Producción y Ventas")
-with col_header_2:
-    st.write(f"📅 Fecha: {datetime.now().strftime('%d/%m/%Y')}")
+# --- CONEXIÓN ---
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- MEMORIA TEMPORAL ---
-if 'data' not in st.session_state:
-    st.session_state.data = pd.DataFrame(columns=[
-        "Fecha", "Categoría", "Descripción", "Lote", "Cantidad", "Unidad", 
-        "Movimiento", "Costo Unitario", "Total", "Observaciones"
-    ])
+def cargar_datos():
+    try:
+        df = conn.read(worksheet="Hoja 1", ttl=0)
+        df = df.dropna(how="all")
+        # Asegurar tipos de datos numéricos
+        df['Cantidad'] = pd.to_numeric(df['Cantidad'], errors='coerce').fillna(0)
+        df['Total'] = pd.to_numeric(df['Total'], errors='coerce').fillna(0)
+        return df
+    except:
+        return pd.DataFrame(columns=["Fecha", "Categoría", "Descripción", "Lote", "Cantidad", "Unidad", "Movimiento", "Costo Unitario", "Total", "Observaciones"])
 
-# --- BARRA LATERAL (SIDEBAR) ---
-with st.sidebar:
-    st.header("⚙️ Opciones")
-    if st.button("🗑️ Resetear Base de Datos"):
-        st.session_state.data = st.session_state.data.iloc[0:0]
-        st.rerun()
-    st.info("Sistema actualizado con control de Muestras.")
+def guardar_datos(df_nuevo):
+    try:
+        conn.update(worksheet="Hoja 1", data=df_nuevo)
+        st.cache_data.clear() # Limpiar memoria para forzar recarga
+        return True
+    except Exception as e:
+        st.error(f"Error al guardar en Google: {e}")
+        return False
 
-# --- FORMULARIO DE INGRESO ---
-st.subheader("📝 Registrar Operación")
+# Cargar al inicio
+df = cargar_datos()
 
-with st.container():
-    # Fila 1: Qué es y Qué pasó
-    c1, c2, c3, c4 = st.columns(4)
-    categoria = c1.selectbox("Categoría del Item", ["Materia Prima", "Producto en Proceso", "Producto Terminado", "Suministros"])
+st.title("🏭 FikaGroup: Control de Producción")
+
+# --- MENÚ PRINCIPAL ---
+tab_mov, tab_prod, tab_ver = st.tabs(["📝 Compra / Venta Simple", "⚙️ Transformación (Fábrica)", "📊 Ver Inventario"])
+
+# ==========================================
+# TAB 1: MOVIMIENTOS SIMPLES (COMPRA/VENTA)
+# ==========================================
+with tab_mov:
+    st.write("Usa esto para compras de materia prima o ventas finales.")
+    c1, c2, c3 = st.columns(3)
+    cat = c1.selectbox("Categoría", ["Materia Prima", "Suministros", "Producto Terminado"])
+    mov = c2.selectbox("Acción", ["Compra (Entrada)", "Venta (Salida)", "Ajuste Inventario", "Muestras"])
+    fecha = c3.date_input("Fecha", datetime.now())
     
-    # AQUI ESTA TU CAMBIO DE MUESTRAS
-    movimiento = c2.selectbox("Tipo de Movimiento", [
-        "Compra/Entrada", 
-        "Producción (+)", 
-        "Venta (-)", 
-        "Entrega de Muestras (-)", 
-        "Consumo Interno (-)", 
-        "Ajuste/Merma"
-    ])
+    c4, c5, c6 = st.columns(3)
+    desc = c4.text_input("Producto", placeholder="Ej: Tomate Redondo")
+    cant = c5.number_input("Cantidad", min_value=0.01, format="%.2f")
+    uni = c6.selectbox("Unidad", ["kg", "g", "unidades", "cajas", "litros"])
     
-    desc = c3.text_input("Descripción (Ej: Salsa Ya!Jua)")
-    lote = c4.text_input("Lote", value="GEN-" + datetime.now().strftime("%m%d"))
+    c7, c8 = st.columns(2)
+    costo = c7.number_input("Costo/Precio Unitario (Bs)", min_value=0.0, format="%.2f")
+    obs = c8.text_input("Notas")
 
-    # Fila 2: Cuánto y a qué precio
-    c5, c6, c7, c8 = st.columns(4)
-    cant = c5.number_input("Cantidad", min_value=0.0, format="%.2f")
-    
-    # AQUI ESTA TU CAMBIO DE UNIDADES
-    unidad = c6.selectbox("Unidad", ["kg", "unidades", "cajas"])
-    
-    costo = c7.number_input("Precio/Costo Unitario (Bs)", min_value=0.0, format="%.2f")
-    obs = c8.text_input("Observaciones")
-
-    # Botón de guardar
-    if st.button("💾 Guardar Registro", type="primary", use_container_width=True):
+    if st.button("💾 Registrar Movimiento Simple", type="primary"):
         if desc and cant > 0:
-            nuevo_registro = {
-                "Fecha": datetime.now().strftime("%Y-%m-%d"),
-                "Categoría": categoria,
+            # Definir signo visual para reportes (aunque guardamos positivo y el tipo define)
+            tipo_mov = mov
+            if "Venta" in mov or "Salida" in mov or "Muestras" in mov:
+                signo_cant = -cant # Para que reste en el stock visual
+            else:
+                signo_cant = cant
+            
+            nuevo = {
+                "Fecha": fecha.strftime("%Y-%m-%d"),
+                "Categoría": cat,
                 "Descripción": desc,
-                "Lote": lote,
-                "Cantidad": cant,
-                "Unidad": unidad,
-                "Movimiento": movimiento,
+                "Lote": "GEN",
+                "Cantidad": signo_cant, # Guardamos con signo para facilitar sumas
+                "Unidad": uni,
+                "Movimiento": tipo_mov,
                 "Costo Unitario": costo,
                 "Total": cant * costo,
                 "Observaciones": obs
             }
-            st.session_state.data = pd.concat(
-                [st.session_state.data, pd.DataFrame([nuevo_registro])], 
-                ignore_index=True
-            )
-            st.success(f"✅ {movimiento} de {desc} registrado correctamente.")
-        else:
-            st.error("⚠️ Falta descripción o cantidad.")
+            df_upd = pd.concat([df, pd.DataFrame([nuevo])], ignore_index=True)
+            if guardar_datos(df_upd):
+                st.success("✅ Guardado correctamente")
+                st.rerun()
 
-# --- DASHBOARD (RESUMEN INTELIGENTE) ---
-st.divider()
-df = st.session_state.data
-
-if not df.empty:
-    # 1. FILTROS RÁPIDOS
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Resumen Financiero", "🍅 Materia Prima", "🌶️ Prod. Terminado / Salidas", "📋 Tabla Completa"])
+# ==========================================
+# TAB 2: TRANSFORMACIÓN (LA MAGIA)
+# ==========================================
+with tab_prod:
+    st.markdown('<p class="big-font">Convertir Materia Prima -> Producto</p>', unsafe_allow_html=True)
+    st.info("Ejemplo: Entran 10kg de Tomate (Materia Prima) -> Salen 2kg de Tomate Deshidratado (En Proceso)")
     
-    with tab1:
-        # Calcular Ventas Totales (Dinero que entró real)
-        ventas = df[df['Movimiento'] == 'Venta (-)']['Total'].sum()
-        # Calcular Gastos en Compras
-        compras = df[df['Movimiento'] == 'Compra/Entrada']['Total'].sum()
-        # Calcular Inversión en Muestras (Dinero que regalaste en producto)
-        costo_muestras = df[df['Movimiento'] == 'Entrega de Muestras (-)']['Total'].sum()
+    col_a, col_b = st.columns(2)
+    
+    # LADO A: LO QUE SE GASTA (INPUT)
+    with col_a:
+        st.error("🔻 LO QUE SALE (Ingrediente)")
+        origen_desc = st.text_input("Ingrediente a usar", placeholder="Ej: Tomate")
+        origen_cant = st.number_input("Cantidad a usar", min_value=0.0, format="%.2f", key="orig_cant")
+        origen_cat = st.selectbox("Categoría Origen", ["Materia Prima", "Producto en Proceso"], key="orig_cat")
+    
+    # LADO B: LO QUE SE CREA (OUTPUT)
+    with col_b:
+        st.success("NV LO QUE ENTRA (Resultado)")
+        dest_desc = st.text_input("Producto Resultante", placeholder="Ej: Tomate Deshidratado")
+        dest_cant = st.number_input("Cantidad Obtenida", min_value=0.0, format="%.2f", key="dest_cant")
+        dest_cat = st.selectbox("Categoría Destino", ["Producto en Proceso", "Producto Terminado"], key="dest_cat")
+        dest_costo = st.number_input("Costo del Resultado (Total)", help="Cuánto vale lo que acabas de producir", key="dest_cost")
+
+    if st.button("⚙️ PROCESAR PRODUCCIÓN (Generar 2 Registros)", type="primary"):
+        if origen_desc and dest_desc and origen_cant > 0:
+            hoy = datetime.now().strftime("%Y-%m-%d")
+            
+            # 1. Registro de Salida (Resta)
+            fila_salida = {
+                "Fecha": hoy,
+                "Categoría": origen_cat,
+                "Descripción": origen_desc,
+                "Lote": "PROD-OUT",
+                "Cantidad": -origen_cant, # Negativo porque se gasta
+                "Unidad": "kg",
+                "Movimiento": "Consumo Producción",
+                "Costo Unitario": 0,
+                "Total": 0,
+                "Observaciones": f"Usado para crear {dest_desc}"
+            }
+            
+            # 2. Registro de Entrada (Suma)
+            fila_entrada = {
+                "Fecha": hoy,
+                "Categoría": dest_cat,
+                "Descripción": dest_desc,
+                "Lote": "PROD-IN",
+                "Cantidad": dest_cant, # Positivo porque se crea
+                "Unidad": "kg", # Asumimos kg, podrías poner selector
+                "Movimiento": "Producción Interna",
+                "Costo Unitario": dest_costo / dest_cant if dest_cant > 0 else 0,
+                "Total": dest_costo,
+                "Observaciones": f"Producido desde {origen_desc}"
+            }
+            
+            # Guardar ambos
+            df_upd = pd.concat([df, pd.DataFrame([fila_salida]), pd.DataFrame([fila_entrada])], ignore_index=True)
+            
+            if guardar_datos(df_upd):
+                st.balloons()
+                st.success(f"✅ Éxito: Se restaron {origen_cant} de {origen_desc} y se sumaron {dest_cant} de {dest_desc}.")
+                st.rerun()
+        else:
+            st.warning("⚠️ Faltan datos del ingrediente o del resultado.")
+
+# ==========================================
+# TAB 3: VISUALIZACIÓN
+# ==========================================
+with tab_ver:
+    if not df.empty:
+        # Agrupar por producto para ver stock real
+        st.subheader("📦 Stock Actual (Inventario)")
+        stock = df.groupby(["Categoría", "Descripción"])["Cantidad"].sum().reset_index()
+        st.dataframe(stock, use_container_width=True)
         
-        col_metrics = st.columns(4)
-        col_metrics[0].metric("💰 Ventas Reales", f"Bs {ventas:,.2f}")
-        col_metrics[1].metric("💸 Compras MP", f"Bs {compras:,.2f}")
-        col_metrics[2].metric("🎁 Inversión Muestras", f"Bs {costo_muestras:,.2f}")
-        col_metrics[3].metric("📈 Flujo de Caja", f"Bs {ventas - compras:,.2f}", 
-             delta="Ganancia" if (ventas-compras) > 0 else "Déficit")
-
-    with tab2:
-        st.write("### Inventario de Materia Prima")
-        df_mp = df[df['Categoría'] == 'Materia Prima']
-        st.dataframe(df_mp, use_container_width=True)
-
-    with tab3:
-        c_a, c_b = st.columns(2)
-        with c_a:
-            st.write("### Stock Producto Terminado")
-            st.dataframe(df[df['Categoría'] == 'Producto Terminado'], use_container_width=True)
-        with c_b:
-            st.write("### Salidas (Ventas y Muestras)")
-            # Mostramos Ventas y Muestras juntas para ver salida de producto
-            filtro_salidas = df['Movimiento'].isin(['Venta (-)', 'Entrega de Muestras (-)'])
-            st.dataframe(df[filtro_salidas], use_container_width=True)
-
-    with tab4:
-        st.dataframe(df, use_container_width=True)
-
-else:
-    st.info("👋 Aún no hay datos. Registra tu primera operación arriba.")
+        st.subheader("📝 Historial Detallado")
+        st.dataframe(df.sort_values(by="Fecha", ascending=False), use_container_width=True)
+        
+        # Botón de descarga excel real
+        pass 
+    else:
+        st.info("La base de datos está vacía o no se pudo cargar.")
