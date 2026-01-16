@@ -3,100 +3,115 @@ import pandas as pd
 from datetime import datetime
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Inventario AI", layout="wide", page_icon="📦")
+st.set_page_config(page_title="Gestión FikaGroup", layout="wide", page_icon="🏭")
 
-# Estilos CSS para que se vea moderno (similar a tu diseño original)
+# Estilos CSS
 st.markdown("""
 <style>
     .stApp { background-color: #0f172a; color: #e2e8f0; }
     .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] { 
         background-color: #1e293b !important; color: #ffffff !important; 
     }
-    div[data-testid="stMetricValue"] { color: #10b981; } /* Color verde esmeralda */
+    /* Colores para métricas */
+    div[data-testid="stMetricValue"] { color: #34d399; } 
 </style>
 """, unsafe_allow_html=True)
 
 # --- TÍTULO ---
 col_header_1, col_header_2 = st.columns([3, 1])
 with col_header_1:
-    st.title("📦 Inventario AI Centralizado")
+    st.title("🏭 Gestión de Producción y Ventas")
 with col_header_2:
     st.write(f"📅 Fecha: {datetime.now().strftime('%d/%m/%Y')}")
 
-# --- MEMORIA TEMPORAL (Antes de conectar Google Sheets) ---
+# --- MEMORIA TEMPORAL ---
 if 'data' not in st.session_state:
+    # Agregamos la columna 'Categoría' que antes no existía
     st.session_state.data = pd.DataFrame(columns=[
-        "Fecha", "Descripción", "Lote", "Cantidad", "Unidad", 
-        "Movimiento", "Origen/Destino", "Costo Unitario", "Costo Total", "Observaciones"
+        "Fecha", "Categoría", "Descripción", "Lote", "Cantidad", "Unidad", 
+        "Movimiento", "Costo Unitario", "Total", "Observaciones"
     ])
 
-# --- BARRA LATERAL ---
+# --- BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
-    st.header("Opciones")
-    st.info("💡 Tip: Pronto conectaremos esto a Google Sheets para que los datos se guarden para siempre.")
-    if st.button("🗑️ Borrar todos los datos (Reset)"):
+    st.header("⚙️ Opciones")
+    if st.button("🗑️ Resetear Base de Datos"):
         st.session_state.data = st.session_state.data.iloc[0:0]
         st.rerun()
+    st.info("Aquí podrás filtrar tus reportes más adelante.")
 
 # --- FORMULARIO DE INGRESO ---
-with st.expander("📝 Ingreso de Movimientos", expanded=True):
-    # Fila 1 de inputs
+st.subheader("📝 Registrar Operación")
+
+with st.container():
+    # Fila 1: Qué es y Qué pasó
     c1, c2, c3, c4 = st.columns(4)
-    desc = c1.text_input("Descripción (Ej: Tomate)")
-    lote = c2.text_input("Lote (Ej: INT-001)", value="GEN-001")
-    cant = c3.number_input("Cantidad", min_value=0.0, format="%.2f")
-    unidad = c4.selectbox("Unidad", ["kg", "ud", "litros", "cajas"])
-    
-    # Fila 2 de inputs
+    categoria = c1.selectbox("Categoría del Item", ["Materia Prima", "Producto en Proceso", "Producto Terminado", "Suministros"])
+    movimiento = c2.selectbox("Tipo de Movimiento", ["Compra/Entrada", "Producción (+)", "Venta (-)", "Consumo Interno (-)", "Ajuste/Merma"])
+    desc = c3.text_input("Descripción (Ej: Tomate, Salsa Picante)")
+    lote = c4.text_input("Lote", value="GEN-" + datetime.now().strftime("%m%d"))
+
+    # Fila 2: Cuánto y a qué precio
     c5, c6, c7, c8 = st.columns(4)
-    mov = c5.selectbox("Tipo Movimiento", ["Entrada", "Salida", "Inv. Inicial"])
-    origen = c6.text_input("Origen/Destino", value="Proveedor General")
-    costo = c7.number_input("Costo Unitario (Bs)", min_value=0.0, format="%.2f")
+    cant = c5.number_input("Cantidad", min_value=0.0, format="%.2f")
+    unidad = c6.selectbox("Unidad", ["kg", "litros", "botellas", "cajas", "g"])
+    costo = c7.number_input("Precio/Costo Unitario (Bs)", min_value=0.0, format="%.2f")
     obs = c8.text_input("Observaciones")
 
-    # Botón de guardar
-    if st.button("Registrar Movimiento", type="primary", use_container_width=True):
+    # Botón gigante de guardar
+    if st.button("💾 Guardar Registro", type="primary", use_container_width=True):
         if desc and cant > 0:
+            # Lógica de Signos: Si es Venta o Consumo, la cantidad es negativa para el stock visual
+            # Pero guardamos el valor absoluto y el tipo de movimiento define el signo en los reportes
+            
             nuevo_registro = {
                 "Fecha": datetime.now().strftime("%Y-%m-%d"),
+                "Categoría": categoria,
                 "Descripción": desc,
                 "Lote": lote,
                 "Cantidad": cant,
                 "Unidad": unidad,
-                "Movimiento": mov,
-                "Origen/Destino": origen,
+                "Movimiento": movimiento,
                 "Costo Unitario": costo,
-                "Costo Total": cant * costo,
+                "Total": cant * costo,
                 "Observaciones": obs
             }
-            # Añadir a la tabla
             st.session_state.data = pd.concat(
                 [st.session_state.data, pd.DataFrame([nuevo_registro])], 
                 ignore_index=True
             )
-            st.success("✅ ¡Movimiento registrado!")
+            st.success(f"✅ {movimiento} de {desc} registrado correctamente.")
         else:
-            st.warning("⚠️ Por favor ingresa al menos una descripción y cantidad.")
+            st.error("⚠️ Falta descripción o cantidad.")
 
-# --- TABLA Y CÁLCULOS ---
+# --- DASHBOARD (RESUMEN INTELIGENTE) ---
 st.divider()
 df = st.session_state.data
 
 if not df.empty:
-    # Cálculos simples
-    entradas = df[df['Movimiento'].isin(['Entrada', 'Inv. Inicial'])]['Cantidad'].sum()
-    salidas = df[df['Movimiento'] == 'Salida']['Cantidad'].sum()
-    stock_actual = entradas - salidas
-    valor_inventario = df['Costo Total'].sum() # Simplificado (Entradas - Salidas en dinero requiere lógica FIFO/Promedio, por ahora suma bruta)
+    # 1. FILTROS RÁPIDOS
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Resumen General", "🍅 Materia Prima", "🌶️ Prod. Terminado / Ventas", "📋 Tabla Completa"])
+    
+    with tab1:
+        # Calcular Ventas Totales (Dinero que entró)
+        ventas = df[df['Movimiento'] == 'Venta (-)']['Total'].sum()
+        # Calcular Compras (Dinero que salió)
+        compras = df[df['Movimiento'] == 'Compra/Entrada']['Total'].sum()
+        
+        m1, m2, m3 = st.columns(3)
+        m1.metric("💰 Ventas Totales", f"Bs {ventas:,.2f}")
+        m2.metric("💸 Gastos en Compras", f"Bs {compras:,.2f}")
+        m3.metric("📈 Balance (Ventas - Compras)", f"Bs {ventas - compras:,.2f}", delta_color="normal")
 
-    # Métricas
-    m1, m2, m3 = st.columns(3)
-    m1.metric("📦 Stock Total (Unidades)", f"{stock_actual:,.2f}")
-    m2.metric("💰 Valor Estimado", f"Bs {valor_inventario:,.2f}")
-    m3.metric("📄 Total Registros", len(df))
+    with tab2:
+        st.write("### Inventario de Materia Prima")
+        # Filtramos solo lo que sea Materia Prima
+        df_mp = df[df['Categoría'] == 'Materia Prima']
+        st.dataframe(df_mp, use_container_width=True)
 
-    # Mostrar Tabla
-    st.subheader("📋 Detalle de Movimientos")
-    st.dataframe(df, use_container_width=True)
-else:
-    st.info("👋 La tabla está vacía. Añade tu primer producto arriba.")
+    with tab3:
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.write("### Stock Producto Terminado")
+            # Mostramos todo lo que sea Producto Terminado
+            st.dataframe(df[df['Categoría'] == 'Producto Terminado'], use_container_width=True)
